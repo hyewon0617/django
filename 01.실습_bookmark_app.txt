@@ -1,0 +1,124 @@
+1. settings.py 수정 : spring에서 web.xml유사
+
+   1) DB설정 
+   
+		DATABASES = {
+		    'default': {
+		        'ENGINE': 'django.db.backends.sqlite3',
+		        (수정) db.sqlite3 -> bookmark.sqlite3으로 수정
+		        'NAME': os.path.join(BASE_DIR, 'bookmark.sqlite3'),
+		    }
+		}   
+   
+   2) 언어설정     : LANGUAGE_CODE = 'ko-kr'
+   3) 시간대변경   : TIME_ZONE = 'Asia/Seoul'
+   4) 외부접속허용 : ALLOWED_HOSTS = ['192.168.0.190']  
+   
+2. 기본테이블설정
+
+   cmd창에서 실행 : pywebapp01 디렉토리에서 실행
+ 
+   0) sysdm.cpl : 환경설정에서 path에 "C:\Anaconda3\Library\bin"추가
+   
+   1) 마이그레이트
+      ... c:\..\pywebapp01>python manage.py migrate
+      -> 데이터베이스 'bookmark.sqlite3'가 생성된다.
+   
+   2) navicat으로 bookmark.sqlite3.db를 확인
+   3) 수퍼유저를 생성
+      ... python manage.py createsuperuser
+      ... 아이디, 비밀번호, 이메일을 입력(이메일은 생략가능)
+      ... admin / admin12345
+         
+3. Application생성
+
+   1) python manage.py startapp bookmark
+   2) bookmark관련 디렉토리가 생성(이클립스에서 f5로 새로고침)
+   3) 테이블을 새로 만들거나 변경할 경우에 models.py, admin.py를 수정해야 함
+      ... models.py : 테이블에 대한 모델 클래스를 정의 (java dto역할)
+      ... admin.py  : models.py에 등록한 테이블이 Admin사이트에서도 보이도록 처리
+   4) settings.py에 bookmark앱을 등록
+      ... 앱의 이름을 정의
+	      INSTALLED_APPS = [
+	        (추가) 'bookmark',   # 이 부분이 앱의 이름 
+          ]
+ 
+4. 테이블정의 : bookmark/models.py
+
+   1) DTO를 정의하는 것
+   2) 테이블을 하나의 클래스로 정의
+   3) 테이블의 컬럼은 클래스의 변수로 매핑
+   	  ... java에서는 getter/setter를 통해서 매핑하지만 django에서는 필요없다. 
+   4) 테이블클래스는 django.db.models.Model클래스를 상속 받아서 정의
+   5) 변수자료형의 정의도 django에서 미리 정의된 자료형을 사용한다.
+      ... 예) models.URLField('필드의 별칭'.unique)
+   6) __str__() : 객체를 문자열로 표현하는 메서드
+
+
+from django.db import models
+
+# 테이블을 정의하는 클래스(java의 DTO와 유사한 코드)
+# 테이블의 필드명과 자료형을 정의
+# 앱이름_클래스이름으로 테이블이 생성 즉, bookmark_bookmark 테이블
+class BookMark(models.Model):  # Model클래스를 상속
+    # 필드정의
+    # 필드명 = 자료형
+    # 스프링에서는 db > table > dto > sql순으로 만들지만 django에서는
+    # 역으로 처리된다. 즉 class를 정의한 후 실행하면 생성되는 process
+    
+    # CharField = varchar(100), blank:빈값허용여부, null:null값허용여부
+    title = models.CharField(max_length=100, blank=True, null=True)
+    
+    # URLField('필드의 별칭, unique: PK)
+    url = models.URLField('url', unique=True)
+    
+    def __str__(self):
+        return self.title    
+
+
+
+5. bookmark/admin.py
+
+   1) Admin 사이트(웹페이지)에 테이블을 반영
+
+from django.contrib import admin
+from bookmark.models import BookMark  # BookMark클래스 로딩
+
+# BookMark클래스(즉, bookmark 테이블)이 Admin(웹페이지)에서 어떤 모습으로
+# 보여질지를 정의하는 클래스
+class BookMarkAdmin(admin.ModelAdmin):
+    # 웹페이지에 출려할 필드목록을 튜플로 정의
+    # 즉, 관리자페이지에 표시할 필드를 설정
+    list_display = ('title', 'url')
+    
+admin.site.register(BookMark, BookMarkAdmin)
+
+6. 데이터베이스 변경사항을 반영
+ 
+   4,5번 step에서 작업한 테이블관련 모델 클래스를 db에 반영
+   
+   1) python manage.py makemigrations : migration정보를 수집
+   2) python manage.py migrate       : 추가된 테이블을 생성
+   3) bookmark.sqlite3에서 bookmark_bookmark테이블이 생성된 것을 확인
+   
+7. 웹서버구동
+
+   1) python manage.py runserver : port번호가 기본으로 8000으로 설정
+   2) port변경할 경우
+      ... python manage.py runserver localhost:8088
+   3) 외부접속시
+      ... python manage.py runserver 192.168.0.190:8088
+
+
+8. 웹브라우저에서 확인
+
+   1) http://localhost:8000
+   2) 관리자웹페이지
+      ... http://localhost:8000/admin
+      ... admin / admin1234
+ 
+9. pywebapp10/urls.py
+10. bookmark/views.pyt
+11. bookmark/templates/list.html
+12. bookmark/templates/detail.html
+13. Django 디버깅

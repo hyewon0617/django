@@ -1,0 +1,302 @@
+[ 실습 : 웹프로그래밍(설문조사)]
+
+1. 프로젝트만들기
+   1) New > Other > PyDev > PyDev Django Project
+   2) 프로젝트이름 : pyweb03
+      ... pyweb03 디렉토리가 2개 생성
+          --> d:/work/python/pyweb03
+          --> d:/work/python/pyweb03/pyweb03 python웹프로젝트의 설정 디렉토리
+
+2. settigs.py  
+
+    1) 날짜포맷설정
+    
+    import os
+    #====추가 start =======================================================
+	# 날짜 포맷 변경을 위한 모듈 로딩
+	from django.conf.locale.ko import formats as ko_formats
+	# 날짜 포맷 설정
+	ko_formats.DATETIME_FORMAT = 'Y-m-d G:i:s'     
+	#====추가 end =========================================================     
+ 
+    3) DB이름 설정
+    
+	DATABASES = {
+	    'default': {
+	        'ENGINE': 'django.db.backends.sqlite3',
+	        #'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+	        'NAME': os.path.join(BASE_DIR, 'survey.sqlite3'),
+	    }
+	}
+		
+	4) 한국어설정
+	
+	# 한국어로 설정
+	LANGUAGE_CODE = 'ko-kr'
+	# 표준시간대 설정
+	TIME_ZONE = 'Asia/Seoul'
+	
+ 3. 기본테이블 생성
+      
+     pyweb03 폴더에서 
+     1) python manage.py migrate
+        ... 실행하기 전에 survey앱이 아직 없기 때문에 
+            setting.py에 survey주석처리후 실행할 것
+        ... database가 생성(survey.sqlite3)이 된다. 
+            
+     2) 슈퍼유저생성 python manage.py createsuperuser
+        ... 아이디, 비밀번호 입력, 이메일은 생략가능
+        ... 비번은 8자이상
+        ... admin / admin1234
+    
+
+ 4. 애플리케이션 생성
+
+    1) python manage.py startapp survey 
+ 
+    2) 앱이름설정
+   
+    settings.py 수정 
+      
+	INSTALLED_APPS = [
+	    'django.contrib.admin',
+	    'django.contrib.auth',
+	    'django.contrib.contenttypes',
+	    'django.contrib.sessions',
+	    'django.contrib.messages',
+	    'django.contrib.staticfiles',
+	    # 추가한 앱(루트패키지이름)
+	    'survey',
+	]    
+
+5. survey/models.py 
+
+   ... 테이블을 새로 만들기 위해 models.py와 admin.py 2개의 파일을 수정해야 함
+   ... models.py : 테이블에 대한 모델 클래스 정의
+   ... admin.py : models.py에 등록한 테이블이 Admin사이트에서도 보이도록 처리
+   ... 테이블은 하나의 클래스로 정의하고
+       테이블의 컬럼은 클래스의 변후고 매핑
+       테이블 클래스는 django.db.models.Model 클래스를 상속받아서 정의
+       변수 자료형도 django에서 미리 정의된 자료형을 사용
+       
+       models.URLField('필드의 별칭',  unique)
+
+from django.db import models
+
+# 설문조사문항
+class Survey(models.Model):
+    # 설문인덱스
+    survey_idx = models.AutoField(primary_key=True)
+    #문제
+    question = models.TextField(null=False)
+    #답1~4
+    ans1 = models.TextField(null=True)
+    ans2 = models.TextField(null=True)
+    ans3 = models.TextField(null=True)
+    ans4 = models.TextField(null=True)
+    
+    # 설문진행상태(y=진행중, n=종료)
+    status = models.CharField(max_length=1, default="y")
+    
+# 설문응답    
+class Answer(models.Model):
+    # 응답아이디(자동증가필드)
+    answer_idx = models.AutoField(primary_key=True)
+    #설문아이디(Survey의 idx필드와 연결되는 Foreign key)
+    survey_idx = models.IntegerField()
+    #응답번호
+    num = models.IntegerField()
+
+6. survey/admin.py 
+   
+   ... Admin사이트에 테이블 반영
+
+from django.contrib import admin
+from survey.models import Survey, Answer
+
+class SurveyAdmin(admin.ModelAdmin):
+    list_diplay = ("question", "ans1", "ans2", "ans3", "ans4", "status")
+
+admin.site.register(Survey, SurveyAdmin)
+admin.site.register(Answer)
+
+
+7. 데이터베이스 변경사항 반영
+   
+   ... 지금까지 코드로 작업한 모델 클래스들을 DB에 반영
+   ... pyweb03폴더에서 아래 명령 실행
+   ... python manage.py makemigrations : migration정보를 수집
+   ... python manage.py migrate        : migration을 실행(step4,5에서 추가한 테이블 생성)
+   ... sqlite db에 survey_survey, survet_answer 테이블 생성확인
+
+8. 웹서버구동
+       
+   ... python manage.py runserver localhost:80
+       --> port 8000번이 사용할 경우 port번호 지정
+       --> 웹브라우저 : http://localhost
+           ... admin/admin1234
+       
+9. pyweb03/urls.py
+
+from django.contrib import admin
+from django.urls import path, include
+from django.conf.urls import url
+from django.conf import settings
+from survey import views
+
+urlpatterns = [
+    #관리자용사이트
+    path('admin/', admin.site.urls),
+    #설문조사URL
+    url(r'^$', views.main),  
+    url(r'^save_survey$', views.save_survey),
+    url(r'^show_result$', views.show_result),
+]
+
+# 디버깅관련 url
+if settings.DEBUG:
+    import debug_toolbar
+    urlpatterns += [
+        url(r'^__debug__/', include(debug_toolbar.urls)),
+    ]
+
+10. survey/view.py
+
+from django.shortcuts import render, render_to_response
+from django.views.decorators.csrf import csrf_exempt
+from survey.models import Survey, Answer
+
+def main(request):
+    # filter -> where
+    # order_by('필드') : 오름차순
+    # order_by('-필드') : 내림차순
+    survey = Survey.objects.filter(status='y').order_by('-survey_idx')[0]
+    return render_to_response('main.html', {'survey':survey})
+
+@csrf_exempt
+def save_survey(request):
+    print(request.POST['survey_idx'])
+    print(request.POST['num'])
+    dto = Answer(survey_idx=request.POST['survey_idx'], 
+                 num=request.POST['num'])
+    dto.save()
+    return render_to_response('success.html')
+
+def show_result(request): 
+    idx = request.GET['survey_idx']
+    ans = Survey.objects.get(survey_idx=idx)
+    answer = [ans.ans1,ans.ans2,ans.ans3,ans.ans4]
+    surveyList = Survey.objects.raw('''
+        select survey_idx, num, count(*) sum_num,
+               round((select count(*) 
+                        from survey_answer
+                       where survey_idx = a.survey_idx 
+                         and num=a.num) * 100.0 /
+                     (select count(*) 
+                        from survey_answer 
+                       where survey_idx = a.survey_idx), 1) rate
+         from survey_answer a
+        where survey_idx = %s
+        group by survey_idx, num
+        order by num
+    ''', idx)
+    surveyList = zip(surveyList, answer)
+    print('surveList:', surveyList)
+    print('answer:', answer)
+    count = Answer.objects.all().count()
+    return render_to_response('result.html', {'surveyList':surveyList, 'count':count})
+
+
+11. templates/main.html
+
+<!DOCTYPE html>
+<html>
+<head>
+<script>
+	function show_result() {
+		location.href="show_result?survey_idx={{survey.survey_idx}}";
+	}
+</script>
+</head>
+<body>
+	<h2>온라인 설문조사</h2>
+	<form method="post" action="save_survey">
+		{% csrf_token %}
+		<input type="radio" name="num" value="1">{{survey.ans1}}<br>
+		<input type="radio" name="num" value="2">{{survey.ans2}}<br>
+		<input type="radio" name="num" value="3">{{survey.ans3}}<br>
+		<input type="radio" name="num" value="4">{{survey.ans4}}<br>
+		<br>
+		<input type="hidden" name="survey_idx" value={{survey.survey_idx}}><br>
+		<input type="submit" value="투표">
+		<input type="button" value="결과확인" onclick="show_result()">
+	</form>
+</body>
+</html>
+
+12. debugging tool
+    1) pip install django-debug-toolbar
+    2) settings.py
+    
+		INSTALLED_APPS = [
+            ...
+            ...          		
+		    'debug_toolbar',
+		]
+
+		MIDDLEWARE = [
+            ...
+            ...   
+		    'debug_toolbar.middleware.DebugToolbarMiddleware',
+		]
+		INTERNAL_IPS = ('127.0.0.1',)
+
+    3) urls.py	
+	   
+	   from django.conf import settings	  
+	   
+	   if settings.DEBUG:
+    		import debug_toolbar
+    		urlpatterns += [
+        		url(r'^__debug__/', include(debug_toolbar.urls)),
+    		]
+    		
+13. templates/result.html    
+
+<<!DOCTYPE html>
+<html>
+<head>
+</head>
+<body>
+	<h2>설문조사 결과</h2>
+	응답인원수 : {{count}}
+	<hr>
+	<table border="1">
+		<tr align="center">
+			<th>문항</th>
+			<th>응답수</th>
+			<th>응답비욜</th>
+		</tr>
+		{% for row,ans in surveyList %}
+		<tr align="center">
+			<td>{{ans}}</td>
+			<td>{{row.sum_num}}</td>
+			<td>{{row.rate}}%</td> 
+		</tr>
+		{% endfor %}
+	</table>
+</body> 
+</html>    	
+
+14. templates/success.html
+
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+<body>
+	<h2>온라인 설문조사</h2>
+	완료되었습니다!
+	<a href="/">Home</a>
+</body>
+</html>   	

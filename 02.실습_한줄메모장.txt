@@ -1,0 +1,332 @@
+[실습02 : 한줄메모장 ]
+
+1. 프로젝트만들기 : pywebapp02
+
+   1) New > Other > PyDev > PyDev Django Project
+   2) project name : pywebapp02
+      ... '../pywebapp02'
+      ... '../pywebapp02/pywebapp02''
+
+2. settings.py
+
+   1) 날짜포맷설정
+   
+      import os
+      # 날짜포맷변경을 위한 모듈 로딩
+      from django.conf.locale.ko import formats as ko_formats
+      # 날짜포맷설정
+      ko_formats.DATETIME_FORMAT = 'Y-m-d G:i:s'
+   
+   2) DB이름 설정
+   
+	DATABASES = {
+	    'default': {
+	        'ENGINE': 'django.db.backends.sqlite3',
+	        #'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+	        'NAME': os.path.join(BASE_DIR, 'memo.sqlite3'),
+	    }
+	}
+	   
+   3) 한국어설정
+   
+ 	# 한국어로 설정
+	LANGUAGE_CODE = 'ko-kr'
+	# 표준시간대 설정
+	TIME_ZONE = 'Asia/Seoul'  
+
+3. 기본테이블 생성
+    
+   cmd창 : d:\...\pywebapp02>
+   
+   1) 시스템DB생성
+      ... python manage.py migrate
+      ... 이 명령을 실행하기전에 settings.py의 INSTALLED_APPS에 memo가 추가되어
+          있지 않아야 한다. 있다면 주석처리를 할 것
+      ... "memo.sqlite3.db" database가 생성
+      
+   2) 수퍼유저생성
+      ... python manage.py createsuperuser
+      ... 아이디, 비밀번호, 이메일(생략가능)
+      ... admin / admin12345
+
+4. application 생성
+
+      cmd창 : d:\...\pywebapp02>
+      
+   1) application 생성
+      ... python manage.py startapp memo
+      
+   2) 앱이름설정
+      ... settings.py 수정
+      ... INSTALLED_APPS = [
+             ...
+             memo,
+          ]
+
+5. memo/models.py
+
+   ... 테이블을 새로 생성하기 위해 models.py와 admin.py 2개파일을 수정
+   ... models.py : 테이블에 대한 모델 클래스를 정의
+   ... admin.py  : models.py에 등록된 테이블을 Admin site에서도 보이도록 설정
+   ... 테이블은 하나의 클래스로 정의하고 테이블의 컬럼은 클래스의 변수로 매핑
+   ... 테이블클래스는 django.db.models.Model클래스를 상속반고 변수자료형도 
+       django에서 미리 정의된 자료형을 사용
+       models.URLField('필드의 별칭', unique)
+       
+from django.db import models
+from datetime import datetime
+
+# 테이블과 매핑하기 위한 클래스
+class Memo(models.Model):
+    # 자동증가 PK
+    idx = models.AutoField(primary_key=True)
+    writer = models.TextField(null=False)
+    memo = models.TextField(null=False)
+    
+    # 날짜 : 현재시각으로 자동입력
+    post_date = models.DateTimeField(defalut=datetime.now(), blank=True)   
+
+6. memo/admin.py
+
+   ... Admin site에 테이블을 반영
+   ... admin.ModelAdmin을 상속
+   
+from django.contrib import admin
+from memo.models import Memo
+# 관리자페이지 설정
+class MemoAdmin(admin.ModelAdmin):
+    # 관리자화면에서 조회할 필드목록을 정의
+    list_display = ('writer', 'memo')
+
+# 관리자에서 사용할 클래스를 등록
+admin.site.register(Memo, MemoAdmin)   
+
+7. 데이터베이스 변경사항 적용
+
+   ... 지금까지 작업한 모델 클래스들을 DB에 반영
+   ... pywebapp02폴더에서 실행
+   ... python manage.py makemigrations : migration정보들을 수집해서 생성
+   ... python manage.py migrate        : migration을 실행(추가한 테이블들을 생성)
+   ... sqlite db에 memo_memo테이블 생성확인
+
+8. 웹서버구동
+
+   ... python manage.py runserver localhost:8088
+       --> port 8000번이 사용할 경우 port번호 지정
+       --> 웹브라우저 : http://localhost
+
+9. pywebapp02/urls.py
+
+from django.contrib import admin
+from django.urls import path
+from django.conf.urls import url, include
+from memo import views
+from django.conf import settings
+
+urlpatterns = [
+    # 관리자용사이트
+    path('admin/', admin.site.urls),
+    
+    # 한줄메모장관련 url(정규식 ^=시작, $=끝)
+    url(r'^$', views.home),
+    url(r'^insert', views.insert_memo),
+    url(r'^detail$', views.detail_memo),
+    url(r'^update$', views.update_memo),
+    url(r'^delete$', views.delete_memo),
+    
+]
+
+if settings.DEBUG:
+    import debug_toolbar
+    urlpatterns += [
+        url(r'^__debug__/', include(debug_toolbar.urls)),
+    ]
+
+10. memo/views.py
+
+from django.shortcuts import render, redirect
+from memo.models import Memo
+# post방식 : 전달된 데이터에 대한 검증모듈
+from django.views.decorators.csrf import csrf_exempt
+
+# Create your views here.
+def home(request):
+    # select * from memo_memo order by idx desc
+    memoList = Memo.objects.order_by('-idx')
+    
+    # select count(*) from memo_memo
+    memoCount = Memo.objects.all().count()
+    
+    # list.html로 forewarding & 데이터전달
+    return render(request, 'list.html', {'memoList':memoList, 'memoCount':memoCount})
+
+@csrf_exempt
+def insert_memo(request):
+    memo = Memo(writer=request.POST['writer'], memo=request.POST['memo'])
+    print("******", request.POST['writer'])
+    memo.save()
+    return redirect('/') # views.home()
+
+# http://localhost:8088/detail?idx=3
+# post, get방식으로 전달된 값은 request객체에 저장 됨
+def detail_memo(request):
+    id = request.GET['idx']
+    dto = Memo.objects.get(idx=id)
+    return render(request, 'detail.html', {'dto':dto})
+    # get()이 아닌 직접 sql문장을 사용할 수 있지만 
+    # django에서는 권장하지 않음
+    # raw쿼리를 사용한 경우에 리스트형으로 리턴되기 때문에
+    # dto[0]형식으로 전달
+    # dto = Memo.objects.raw('''
+    #       select idx, writer, memo, post_date
+    #         from memo_memo
+    #        where idx = %s
+    # ''', id)
+    # return render(request, 'detail.html', {'dto':dto[0]})
+
+@csrf_exempt    
+def update_memo(request):
+    id = request.POST['idx']
+    memo = Memo(idx=id, writer=request.POST['writer'], memo=request.POST['memo'])
+    
+    # print() django 콘솔창에 출력된다.
+    print('writer =', request.POST['writer'])
+    print('memo =', request.POST['memo'])
+    memo.save()
+    return redirect('/')
+
+@csrf_exempt
+def delete_memo(request):
+    id = request.POST['idx']
+    Memo.objects.get(idx=id).delete()
+    return redirect('/')
+
+11. templates/list.html
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Insert title here</title>
+</head>
+<body>
+
+	<!-- post방식으로 전홍할 경우 검증을 위해 csfr 토큰값을 전달해야 한. -->
+	<form action="insert_memo" method="post">
+		{% csrf_token %}
+		
+<!-- 
+		post form(자료를 수정하는 작업)을 만들고 있기 때문에 사이트간 요청
+		위조(Cross Site Request Forgeries)에 대해 예방을 해야 한다.
+		Django는 사이트 간 요청위조(CSRF)에 대항하기 위한 사용하기 쉬운 시
+		스템을 가지고 있기 때문에 너무 심각하게 고민할 필요가 없다.
+		간단히 말하면 내부 URL들을 향하는 모든 Post폼에 템플릿태그인 
+		{ % csrf_token % }를 사용하면 된다.
+		예를 들어 입력창에
+		<script>location.href='http://google.com'</script>등을 입력했을 경우
+		이러한 것을 검증하기 위한 기술이다.
+ -->		
+		이름 : <input name="writer"><br>
+		메모 : <input name="memo"><br>
+		<input type="submit" value="확인"/>
+	</form>
+	{{memoCount}}개의 메모가 있습니다.
+	<hr>
+	
+	<table border="1">
+		<tr>
+			<th>번호</th>
+			<th>이름</th>
+			<th>메모</th>
+			<th>날짜</th>
+		</tr>
+		
+		{% for row in memoList %}
+		<tr>
+			<td>{{row.idx}}</td>
+			<td>{{row.writer}}</td>
+			<td><a href="detail?idx={{row.idx}}">{{row.memo}}</a></td>
+			<td>{{row.post_date}}</td>
+		</tr>
+		{% endfor %}
+	</table>
+</body>
+</html>
+
+12. templates/detail.html
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Insert title here</title>
+<script>
+	function update() {
+		document.form1.action="update_memo";
+		document.form1.submit();
+	}
+	
+	function del() { // delete는 javascript의 예약어
+		if(confirm("삭제하겠습니까?")) {
+			document.form1.action="delete_memo";
+			document.form1.submit();				
+		}
+	}
+</script>
+</head>
+<body>
+	<h2>메모편집</h2>
+	<form name="form1" method="post">
+		<table border="1">
+			<tr>
+				<td>이름</td>
+				<td><input name="writer" value={{dto.writer}}></td>
+			</tr>
+			<tr>
+				<td>날짜</td>
+				<td>{{dto.post_date}}</td>
+			</tr>
+			<tr>
+				<td>메모</td>
+				<td><input name="memo" value={{dto.memo}}></td>
+			</tr>
+			<tr>
+				<td colspan="2" align="center">
+					<input type="hidden" name="idx" value={{dto.idx}} />
+					<input type="button" value="수정" onclick="update()" />
+					<input type="button" value="삭제" onclick="del()" />
+				</td>
+			</tr>
+		
+		</table>
+	</form>
+</body>
+</html>
+
+13. debugging tool
+
+    1) pip install django-debug-toolbar
+    2) settings.py
+    
+		INSTALLED_APPS = [
+            ...
+            ...          		
+		    'debug_toolbar',
+		]
+
+		MIDDLEWARE = [
+            ...
+            ...   
+		    'debug_toolbar.middleware.DebugToolbarMiddleware',
+		]
+		INTERNAL_IPS = ('127.0.0.1',)
+
+    3) urls.py	
+	   
+	   from django.conf import settings	  
+	   
+	   if settings.DEBUG:
+    		import debug_toolbar
+    		urlpatterns += [
+        		url(r'^__debug__/', include(debug_toolbar.urls)),
+    		]

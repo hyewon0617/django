@@ -1,0 +1,496 @@
+[실습04 : 게시판 with MySQL]
+
+0. cmd창 : pip install django==2.1
+
+1. 프로젝트만들기
+
+   1) New > Other > PyDev > PyDev Django Project
+   2) 프로젝트이름 : pyweb04
+      ... pyweb04 디렉토리가 2개 생성
+          --> ../pywebapp04
+          --> ../pywebapp04/pywebapp04 python웹프로젝트의 설정 디렉토리
+   3) pip install pymysql
+   
+2. settigs.py  
+
+    1) 날짜포맷설정
+    
+		import os
+		# ==== 추가 start ============================================
+		# 날짜포맷변경을 위한 모듈 로딩
+		from django.conf.locale.ko import formats as ko_formats
+		# 날짜포맷설정
+		ko_formats.DATETIME_FORMAT = 'Y-m-d G:i:s'
+		# ==== 추가 end ===============================================
+		import pymysql
+		pymysql.install_as_MySQLdb()  # mysqldb설치함수
+		
+	2) mySQL설정
+	
+		DATABASES = {
+		    'default': {
+		        'ENGINE': 'django.db.backends.mysql',
+		        'NAME': 'pywebapp14',
+		        'USER': 'root',
+		        'PASSWORD': '12345',
+		        'HOST': 'localhost',
+		        'PORT': '3306',
+		    }
+		}    
+			
+    3) 한국어설정
+	
+		# 한국어로 설정
+		LANGUAGE_CODE = 'ko-kr'
+		# 표준시간대 설정
+		TIME_ZONE = 'Asia/Seoul'		
+
+3. 기본테이블 생성
+     
+     1) mysql db 생성 :  create database pywebapp04; 
+     
+     pywebapp04 폴더에서 
+     
+     2) python manage.py migrate            
+     3) 슈퍼유저생성 python manage.py createsuperuser
+        ... 아이디, 비밀번호 입력, 이메일은 생략가능
+        ... 비번은 8자이상
+        ... admin / admin1234
+        		
+4. 애플리케이션 생성
+
+    1) python manage.py startapp board 
+    2) settings.py : 앱이름(board) 등록		
+		
+5. board/models.py
+
+   1) Board / Comment 테이블 정의
+   
+  from django.db import models
+from datetime import datetime
+
+class Board(models.Model):
+    idx = models.AutoField(primary_key=True)
+    writer = models.CharField(null=False, max_length=50)
+    title = models.CharField(null=False, max_length=150)
+    hit = models.IntegerField(default=0)
+    content = models.TextField(null=False)
+    post_date = models.DateTimeField(default=datetime.now, blank=True)
+    filename = models.CharField(null=True, max_length=500, blank=True, default='')
+    filesize = models.IntegerField(default=0)
+    down = models.IntegerField(default=0)
+
+    def hit_up(self):
+        self.hit += 1
+        
+    def down_up(self):
+        self.down += 1
+
+class Comment(models.Model):
+    idx = models.AutoField(primary_key=True)
+    board_idx = models.IntegerField(null=False)
+    writer = models.CharField(null=False, max_length=50)
+    content = models.TextField(null=False)
+    post_date = models.DateTimeField(default=datetime.now, blank=True)
+  		
+6. board/admin.py	
+
+from django.contrib import admin
+from board.models import Board
+
+class BoardAdmin(admin.ModelAdmin):
+    list_display = ('writer', 'title', 'content')
+
+admin.site.register(Board, BoardAdmin)
+
+7. 데이터베이스를 application에 반영
+
+   1) python manage.py makemigrations : migration정보를 수집
+   2) python manage.py migrate        : migration을 실행(테이블생성등...)
+   3) board_board, board_comment테이블 생성확인
+      ... default값을 확인할 것
+      ... date의 기본값 (oracle은 sysdate, mysql은 now() or current_timestamp
+
+   4) sample 데이터생성(procedure를 생성)
+   
+	# drop procedure if exists loopInsert$$
+	
+	create procedure loopInsert()
+	begin
+		declare i int default 1;
+		delete from board_board;
+		while i <= 991 do
+			insert into board_board (idx, writer, title, content, hit, post_date)
+			  values(i, 'hongildong', 
+				concat('제목 ', i), 
+				concat('게시판_내용 ', i),
+			  0,
+			  now());
+			set i = i + 1;
+		end while;	
+	
+	end
+	
+	call loopInsert;
+	
+	select count(*) from board_board;
+   
+8. 웹서버구동
+ 
+   ... python manage.py runserver localhost:8088
+   
+9. board/urls.py
+
+from django.contrib import admin
+from django.urls import path, include
+from django.conf.urls import url
+from django.conf import settings
+from board import views
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('', views.list),
+    path('write', views.write),
+    path('insert', views.insert),
+    path('detail', views.detail),
+    path('update', views.update),
+    path('delete', views.delete),
+    path('download', views.download),
+    path('reply_insert', views.reply_insert),
+]
+
+10. board/view.py
+
+#-*- coding: utf-8 -*-
+from django.shortcuts import render, redirect
+from django.views.decorators.csrf import csrf_exempt
+from board.models import Board, Comment
+from django.db.models import Q 
+import math
+import os
+from django.http import HttpResponse, HttpResponseRedirect
+from django.utils.http import urlquote
+from Demos.mmapfile_demo import page_size
+
+
+UPLOAD_DIR = 'd:/gilbaek/data/django/'
+
+@csrf_exempt
+def list(request):
+    
+    try:
+        search_option = request.POST["search_option"]
+    except:
+        search_option = "writer"
+    
+    try:
+        search = request.POST["search"]
+    except:
+        search = ""
+        
+    # filter()함수
+    # select count(*) from board_board where writer like '%작성자%' or title like '%%'
+    # 필드명__contains = 값 -> where writer like '%작성자%'
+    if search_option == "all":
+      boardCount = Board.objects.filter(Q(writer__contains=search) | \
+                                        Q(title__contains=search) |
+                                        Q(content__contains=search)).count()               
+    elif search_option == "writer":
+      boardCount = Board.objects.filter(Q(writer__contains=search)).count()      
+    elif search_option == "title":    
+      boardCount = Board.objects.filter(Q(title__contains=search)).count()   
+    elif search_option == "content":        
+      boardCount = Board.objects.filter(Q(content__contains=search)).count()        
+        
+    try:
+        start = int(request.GET['start']) 
+    except:
+        start = 0
+        
+    page_size = 10
+    page_list_size = 10
+    end = start + page_size
+    total_page = math.ceil(boardCount / page_size)   
+    current_page = math.ceil((start+1) / page_size)  
+    start_page = math.floor((current_page-1) / page_list_size) * page_list_size + 1
+    end_page = start_page + page_list_size - 1
+    
+    if total_page < end_page: 
+        end_page = total_page
+        
+    if start_page >= page_list_size: 
+        prev_list = (start_page - 2) * page_size
+    else:
+        prev_list = 0
+    
+    if total_page > end_page:
+        next_list = end_page * page_size
+    else:
+        next_list = 0
+        
+    if search_option == "all":
+      boardList = Board.objects.filter(Q(writer__contains=search) | \
+                                        Q(title__contains=search) |
+                                        Q(content__contains=search)).order_by("-idx")[start:end]               
+    elif search_option == "writer":
+      boardList = Board.objects.filter(Q(writer__contains=search)).order_by("-idx")[start:end]       
+    elif search_option == "title":    
+      boardList = Board.objects.filter(Q(title__contains=search)).order_by("-idx")[start:end]    
+    elif search_option == "content":        
+      boardList = Board.objects.filter(Q(content__contains=search)).order_by("-idx")[start:end]    
+        
+#     print("start_page", start_page)     
+#     print("end_page", end_page)     
+#     print("page_list_size", page_list_size)     
+#     print("total_page", total_page)     
+#     print("prev_list", prev_list)     
+#     print("next_list", next_list)     
+    
+    links = []
+    for i in range(start_page, end_page + 1):
+        page = (i-1) * page_size
+        links.append("<a href=?start=" + str(page) + ">" + str(i) +"</a>")
+        
+    return render(request, 'list.html',
+                  {'boardCount':boardCount,
+                   'search_option':search_option,
+                   'boardList':boardList,
+                   'links':links,
+                   'prev_list':prev_list,
+                   'next_list':next_list,
+                   'search':search,
+                   'range':range(start_page-1, end_page),
+                   'start_page':start_page,
+                   'end_page':end_page,
+                   'page_list_size':page_list_size,
+                   'total_page':total_page                 
+                   })
+
+@csrf_exempt
+def write(request):
+    return render(request, 'write.html')
+   
+@csrf_exempt    
+def insert(request):
+    fname = ""
+    fsize = 0
+    if "file" in request.FILES:
+        file = request.FILES["file"]
+        fname = file._name
+        # fsize = file._size
+        fsize = file.size
+        
+    fp = open("%s%s" %(UPLOAD_DIR, fname), "wb")
+    for chunk in file.chunks():
+        fp.write(chunk)
+    fp.close()
+    
+    dto = Board(writer = request.POST["writer"],
+                title = request.POST["title"],
+                content= request.POST["content"],
+                filename = fname,
+                filesize = fsize
+                )
+    dto.save()
+    print(dto)
+    return redirect("/")
+
+
+def detail(request):
+    
+    id = request.GET["idx"]
+    
+    # select * from board_board where idx = 10
+    dto = Board.objects.get(idx=id)
+    
+    # 조회수 증가처리
+    dto.hit_up()
+    dto.save() # 내부적으로 update 쿼리 호출
+    
+    # 댓글 : select * from board_comment where idx = id order by idx
+    commentList = Comment.objects.filter(board_idx = id).order_by('idx')
+    
+    filesize = '%0.2f' % (dto.filesize / 1024 / 1024 ) # byte단위를 mega단위로 변환
+    return render(request, 'detail.html',
+                  {'dto':dto, 'filesize':filesize, 'commentList':commentList})
+
+@csrf_exempt
+def update(request):
+    
+    id = request.POST["idx"]
+    dto_src = Board.objects.get(idx=id)
+    
+    fname = dto_src.filename
+    fsize = dto_src.filesize
+    
+    if "file" in request.FILES:  # 새로운 첨부파일이 있다.
+        file = request.FILES["file"]
+        fnmae = file._name
+        fsize = file.size
+    
+        fp = open("%s%s" % (UPLOAD_DIR, fname), "wb")
+        for chunk in file.chunks():
+            fp.write(chunk)
+        fp.close()
+        
+    dto_new = Board(idx=id, 
+                    writer = request.POST["writer"],
+                    title = request.POST["title"],
+                    content= request.POST["content"],
+                    filename = fname,
+                    filesize = fsize
+                    )
+    
+    dto_new.save() # update 쿼리호출, idx가 있으면 update, 없으면 insert를 실행
+
+    return redirect("/")
+    
+@csrf_exempt
+def delete(request):
+    
+    id = request.POST["idx"]
+    Board.objects.get(idx=id).delete()
+    return redirect("/")
+
+@csrf_exempt
+def reply_insert(request): 
+    id = request.POST["idx"]
+    dto = Comment(board_idx=id, 
+                  writer=request.POST["writer"], 
+                  content=request.POST["content"])
+    dto.save()
+    return HttpResponseRedirect("detail?idx=" + id)
+
+def download(request):
+    
+    id = request.GET['idx']
+    dto = Board.objects.get(idx=id)
+    path = UPLOAD_DIR + dto.filename
+    #print("path" + path) 
+
+    filename = os.path.basename(path)
+    #filename = filename.encode("utf-8")
+    filename = urlquote(filename)
+    #print("pfilename:" + os.path.basename(path))
+
+    
+    with open(path, 'rb') as file:
+        print(filename)
+        response = HttpResponse(file.read(), content_type="application/octet-stream")
+        # response["Content_Disposition"] = "attachment; filename*=UTF-8''{0}".format(filename)
+        response['Content-Disposition'] = 'attachment;filename*=UTF-8\'\'%s' % filename
+        dto.down_up()
+        dto.save()
+        return response
+
+11. templates/list.html
+
+{% load staticfiles %}
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Django로 만든 게시판</title>
+</head>
+<body>
+	<h2>게시판</h2>
+	<form method="post">
+		<select name="search_option">
+			{% if search_option == "writer" %}
+				<option value="writer" selected>작성자</option>
+				<option value="title">제목</option>
+				<option value="content">내용</option>
+				<option value="all">작성자,제목,내용</option>
+			{% elif search_option == "title" %}
+				<option value="writer">작성자</option>
+				<option value="title" selected>제목</option>
+				<option value="content">내용</option>
+				<option value="all">작성자,제목,내용</option>
+			{% elif search_option == "content" %}
+				<option value="writer">작성자</option>
+				<option value="title">제목</option>
+				<option value="content" selected>내용</option>
+				<option value="all">작성자,제목,내용</option>
+			{% elif search_option == "all" %}
+				<option value="writer">작성자</option>
+				<option value="title">제목</option>
+				<option value="content">내용</option>
+				<option value="all" selected>작성자,제목,내용</option>
+			{% endif %}
+		</select>
+		<input type="text" name="search" value="{{search}}"/>
+		<input type="submit" value="검색"/>
+	</form>
+	게시물 : {{boardCount}}<br>
+	<a href="write">글쓰기</a>
+	<table border="1">
+		<tr>
+			<th>번호</th>
+			<th>작성자</th>
+			<th>제목</th>
+			<th>날짜</th>
+			<th>조회수</th>
+			<th>첨부파일</th>
+			<th>다운로드</th>
+		</tr>
+		{% for row in boardList %}
+			<tr algin="center">
+				<td>{{row.idx}}</td>
+				<td>{{row.writer}}</td>
+				<td><a href="detail?idx={{row.idx}}">{{row.title}}</a></td>
+				<td>{{row.post_date}}</td>
+				<td>{{row.hit}}</td>
+				<td>
+					{% if row.filesize > 0 %}
+						<a href="download?idx={{row.idx}}"><img src="{% static "images/file.gif" %}"></a>										
+					{% endif %}
+				</td>
+				<td>{{row.down}}</td>
+			</tr>
+		{% endfor %}
+		<!-- 페이징 [이전] 1 2 3 4 5 6 7 8 9 10 [다음] -->
+		<tr>
+			<td colspan="7" align="center">
+				{% if start_page >= page_list_size %}
+					<a href="?start={{prev_list}}">[이전]</a>
+				{% endif %}
+				
+				<!-- 페이지리스트 -->
+				{% autoescape off%}
+				{% for link in links %}
+					{{link}}
+				{% endfor %}
+				{% endautoescape %}
+				
+				<!-- 다음페이지 리스트 -->
+				{% if total_page > end_page %}
+					<a href="?start={{next_list}}">[다음]</a>
+				{% endif %}				
+			</td>
+		</tr>
+	</table>
+	
+</body>
+</html>
+
+
+
+<연습문제 계단형 게시판 만들기>
+https://coneseo.tistory.com/30
+https://gangnam-americano.tistory.com/25
+https://ssmlim.tistory.com/7
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
