@@ -275,7 +275,7 @@ def show_result(request):
 		<tr align="center">
 			<th>문항</th>
 			<th>응답수</th>
-			<th>응답비욜</th>
+			<th>응답비</th>
 		</tr>
 		{% for row,ans in surveyList %}
 		<tr align="center">
